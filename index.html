@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FireGuard RTOS - Dashboard Giám Sát & Điều Khiển ESP32</title>
+  <!-- Thư viện MQTT.js và Chart.js qua CDN -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --bg-main: #0b1320;
+      --bg-card: #131f33;
+      --bg-subcard: #18263e;
+      --border-color: #1f314d;
+      --text-primary: #f1f5f9;
+      --text-secondary: #94a3b8;
+      --accent-gas: #f59e0b;
+      --accent-temp: #38bdf8;
+      --accent-purple: #8b5cf6;
+      --accent-green: #10b981;
+      --accent-red: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-main);
+      color: var(--text-primary);
+      min-height: 100vh;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 1100px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Thanh trạng thái MQTT */
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      padding: 12px 20px;
+      border-radius: 14px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 1.05rem;
+      letter-spacing: 0.5px;
+    }
+
+    .mqtt-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      background: var(--bg-subcard);
+      padding: 6px 14px;
+      border-radius: 20px;
+      border: 1px solid var(--border-color);
+    }
+
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--accent-red);
+      box-shadow: 0 0 8px var(--accent-red);
+      transition: all 0.3s;
+    }
+
+    .status-dot.connected {
+      background: var(--accent-green);
+      box-shadow: 0 0 8px var(--accent-green);
+    }
+
+    /* Lưới 2 cột */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+    }
+
+    @media (max-width: 768px) {
+      .grid-2 {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 18px;
+      padding: 22px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+    }
+
+    /* Thẻ cảm biến */
+    .sensor-card {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      min-height: 175px;
+    }
+
+    .sensor-info {
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .sensor-title {
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-secondary);
+    }
+
+    .gas-value, .temp-value {
+      font-size: 2.3rem;
+      font-weight: 800;
+      line-height: 1.1;
+      color: #ffffff;
+    }
+
+    .sub-metric {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    .accent-line {
+      width: 42px;
+      height: 4px;
+      border-radius: 4px;
+    }
+
+    .accent-line.gas { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .accent-line.temp { background: linear-gradient(90deg, #8b5cf6, #38bdf8); }
+
+    .threshold-note {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    .sensor-icon {
+      width: 95px;
+      height: 95px;
+      z-index: 2;
+      opacity: 0.92;
+    }
+
+    .glow-gas {
+      position: absolute;
+      right: -25px;
+      bottom: -25px;
+      width: 140px;
+      height: 140px;
+      background: radial-gradient(circle, rgba(245, 158, 11, 0.16) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .glow-temp {
+      position: absolute;
+      right: -25px;
+      bottom: -25px;
+      width: 140px;
+      height: 140px;
+      background: radial-gradient(circle, rgba(56, 189, 248, 0.16) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    /* Biểu đồ */
+    .chart-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .chart-title {
+      font-size: 1rem;
+      font-weight: 700;
+    }
+
+    .badge-pill {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      background: var(--bg-subcard);
+      border: 1px solid var(--border-color);
+      padding: 4px 12px;
+      border-radius: 20px;
+    }
+
+    .chart-container {
+      position: relative;
+      height: 210px;
+      width: 100%;
+    }
+
+    /* Điều khiển thiết bị */
+    .control-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .control-title-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .control-icon-box {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      background: var(--accent-purple);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 15px rgba(139, 92, 246, 0.4);
+    }
+
+    .mode-switcher {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .mode-tabs {
+      display: flex;
+      background: #0d1626;
+      padding: 4px;
+      border-radius: 12px;
+      border: 1px solid var(--border-color);
+    }
+
+    .mode-btn {
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      padding: 7px 18px;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.25s;
+    }
+
+    .mode-btn.active {
+      background: var(--accent-purple);
+      color: #ffffff;
+      box-shadow: 0 2px 10px rgba(139, 92, 246, 0.45);
+    }
+
+    .mode-label-text {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--text-secondary);
+      letter-spacing: 0.8px;
+    }
+
+    .actuator-card {
+      background: var(--bg-subcard);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 18px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .actuator-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .actuator-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .actuator-name {
+      font-weight: 700;
+      font-size: 1rem;
+      margin-bottom: 3px;
+    }
+
+    .actuator-desc {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+    }
+
+    .actuator-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .toggle-btn {
+      width: 56px;
+      height: 30px;
+      border-radius: 30px;
+      border: none;
+      background: #334155;
+      position: relative;
+      cursor: pointer;
+      transition: background 0.3s;
+      padding: 0;
+    }
+
+    .toggle-btn::after {
+      content: '';
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #ffffff;
+      transition: transform 0.3s;
+    }
+
+    .toggle-btn.on {
+      background: var(--accent-green);
+    }
+
+    .toggle-btn.on::after {
+      transform: translateX(26px);
+    }
+
+    .toggle-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .state-badge {
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 5px 12px;
+      border-radius: 8px;
+      background: #0f172a;
+      color: var(--text-secondary);
+      min-width: 48px;
+      text-align: center;
+      border: 1px solid var(--border-color);
+    }
+
+    .state-badge.on {
+      background: rgba(16, 185, 129, 0.18);
+      color: var(--accent-green);
+      border-color: rgba(16, 185, 129, 0.4);
+    }
+
+    @keyframes spin {
+      100% { transform: rotate(360deg); }
+    }
+    .fan-spinning {
+      animation: spin 1.2s linear infinite;
+    }
+
+    .alert-bar {
+      margin-top: 18px;
+      background: var(--bg-subcard);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 14px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .alert-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+    }
+
+    .alert-badge {
+      padding: 6px 16px;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: 800;
+      letter-spacing: 0.8px;
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--accent-green);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+    }
+
+    .alert-badge.fire {
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+      border-color: rgba(239, 68, 68, 0.5);
+      animation: pulseFire 1s infinite;
+    }
+
+    @keyframes pulseFire {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
+      50% { box-shadow: 0 0 14px 4px rgba(239, 68, 68, 0.35); }
+    }
+
+    .status-footer-note {
+      margin-top: 12px;
+      font-size: 0.8rem;
+      color: var(--accent-green);
+    }
+
+    .footer {
+      text-align: center;
+      font-size: 0.78rem;
+      color: #64748b;
+      margin-top: 6px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- Thanh trạng thái kết nối MQTT -->
+    <div class="top-bar">
+      <div class="brand">
+        <span>🔥 FireGuard RTOS Dashboard</span>
+      </div>
+      <div class="mqtt-status">
+        <span class="status-dot" id="mqttDot"></span>
+        <span id="mqttStatusText">Đang kết nối broker.hivemq.com...</span>
+      </div>
+    </div>
+
+    <!-- Hàng 1: Thông số Gas & Nhiệt độ (DS18B20) -->
+    <div class="grid-2">
+      <div class="card sensor-card">
+        <div class="sensor-info">
+          <div class="sensor-title">KHÍ GAS / KHÓI · MQ-2</div>
+          <div class="gas-value" id="gasDisplay">0.0 %</div>
+          <div class="sub-metric" id="gasSubDisplay">ADC: 0 | 0 ppm</div>
+          <div class="accent-line gas"></div>
+          <div class="threshold-note">Quạt kích hoạt khi chỉ số &ge; 50.0%</div>
+        </div>
+        <svg class="sensor-icon" viewBox="0 0 100 100" fill="none">
+          <rect x="28" y="14" width="44" height="22" rx="11" fill="#cbd5e1"/>
+          <line x1="36" y1="20" x2="64" y2="20" stroke="#475569" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="36" y1="25" x2="64" y2="25" stroke="#475569" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="36" y1="30" x2="64" y2="30" stroke="#475569" stroke-width="2.5" stroke-linecap="round"/>
+          <rect x="20" y="38" width="60" height="44" rx="10" fill="#1e293b" stroke="#64748b" stroke-width="2.5"/>
+          <rect x="28" y="46" width="44" height="16" rx="4" fill="#0f172a"/>
+          <circle cx="38" cy="54" r="3" fill="#f59e0b"/>
+          <circle cx="50" cy="54" r="3" fill="#f59e0b"/>
+          <circle cx="62" cy="54" r="3" fill="#f59e0b"/>
+        </svg>
+        <div class="glow-gas"></div>
+      </div>
+
+      <div class="card sensor-card">
+        <div class="sensor-info">
+          <div class="sensor-title">NHIỆT ĐỘ · DS18B20</div>
+          <div class="temp-value" id="tempDisplay">25.0 °C</div>
+          <div class="sub-metric" id="tempSubDisplay">Cảm biến 1-Wire (GPIO 4)</div>
+          <div class="accent-line temp"></div>
+          <div class="threshold-note">Máy bơm kích hoạt khi nhiệt độ &ge; 45.0°C</div>
+        </div>
+        <svg class="sensor-icon" viewBox="0 0 100 100" fill="none">
+          <rect x="40" y="14" width="20" height="52" rx="10" fill="#e2e8f0" stroke="#38bdf8" stroke-width="3"/>
+          <circle cx="50" cy="72" r="16" fill="#e2e8f0" stroke="#38bdf8" stroke-width="3"/>
+          <rect x="46" y="34" width="8" height="36" rx="4" fill="#0284c7"/>
+          <circle cx="50" cy="72" r="10" fill="#0284c7"/>
+        </svg>
+        <div class="glow-temp"></div>
+      </div>
+    </div>
+
+    <!-- Hàng 2: Biểu đồ thời gian thực -->
+    <div class="grid-2">
+      <div class="card">
+        <div class="chart-header">
+          <span class="chart-title">Biểu đồ khí gas / khói</span>
+          <span class="badge-pill">MQ-2 · 20 mẫu gần nhất</span>
+        </div>
+        <div class="chart-container">
+          <canvas id="gasChart"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="chart-header">
+          <span class="chart-title">Biểu đồ nhiệt độ</span>
+          <span class="badge-pill">DS18B20 · 20 mẫu gần nhất</span>
+        </div>
+        <div class="chart-container">
+          <canvas id="tempChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hàng 3: Điều khiển thiết bị (Manual/Auto) -->
+    <div class="card">
+      <div class="control-header">
+        <div class="control-title-group">
+          <div class="control-icon-box">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+          </div>
+          <span style="font-size: 1.15rem; font-weight: 700;">Điều khiển thiết bị</span>
+        </div>
+
+        <div class="mode-switcher">
+          <div class="mode-tabs">
+            <button type="button" class="mode-btn" id="btnManual" onclick="setMode('manual')">MANUAL</button>
+            <button type="button" class="mode-btn active" id="btnAuto" onclick="setMode('auto')">AUTO</button>
+          </div>
+          <span class="mode-label-text" id="modeTextLabel">AUTO</span>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <!-- Quạt thông gió (GPIO 18) -->
+        <div class="actuator-card">
+          <div class="actuator-left">
+            <div class="actuator-icon">
+              <svg id="fanSvg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2">
+                <path d="M12 12c-2-2.67-4-4-6-4a4 4 0 1 0 0 8c2 0 4-1.33 6-4Zm0 0c2 2.67 4 4 6 4a4 4 0 0 0 0-8c-2 0-4 1.33-6 4Zm0 0c-2.67 2-4 4-4 6a4 4 0 1 0 8 0c0-2-1.33-4-4-6Zm0 0c2.67-2 4-4 4-6a4 4 0 0 0-8 0c0 2 1.33 4 4 6Z"/>
+              </svg>
+            </div>
+            <div>
+              <div class="actuator-name">Quạt thông gió</div>
+              <div class="actuator-desc">LED Xanh (GPIO 18)</div>
+            </div>
+          </div>
+          <div class="actuator-controls">
+            <button type="button" class="toggle-btn" id="btnFan" onclick="toggleDevice('fan')" disabled></button>
+            <span class="state-badge" id="badgeFan">OFF</span>
+          </div>
+        </div>
+
+        <!-- Máy bơm (GPIO 19) -->
+        <div class="actuator-card">
+          <div class="actuator-left">
+            <div class="actuator-icon">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2">
+                <rect x="4" y="10" width="12" height="10" rx="2"/>
+                <path d="M8 10V6h8v4"/>
+                <path d="M16 14h4v4"/>
+                <line x1="2" y1="20" x2="22" y2="20"/>
+              </svg>
+            </div>
+            <div>
+              <div class="actuator-name">Máy bơm</div>
+              <div class="actuator-desc">LED Đỏ (GPIO 19)</div>
+            </div>
+          </div>
+          <div class="actuator-controls">
+            <button type="button" class="toggle-btn" id="btnPump" onclick="toggleDevice('pump')" disabled></button>
+            <span class="state-badge" id="badgePump">OFF</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="alert-bar">
+        <div class="alert-left">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2.2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <span>Trạng thái cảnh báo hệ thống</span>
+        </div>
+        <span class="alert-badge" id="systemAlertBadge">AN TOÀN</span>
+      </div>
+
+      <div class="status-footer-note" id="deviceSummaryNote">
+        Trạng thái thiết bị: Quạt OFF · Máy bơm OFF
+      </div>
+    </div>
+
+    <div class="footer">
+      FireGuard RTOS · ESP32 · FreeRTOS · MQTT HiveMQ
+    </div>
+  </div>
+
+  <script>
+    // Đã đổi sang kết nối MQTT qua WebSocket chuẩn SSL của HiveMQ (Không bị chặn port)
+    const MQTT_WS_URL   = 'wss://broker.hivemq.com:8884/mqtt';
+    const TOPIC_DATA    = 'lab3/fire_alarm/data';
+    const TOPIC_CONTROL = 'lab3/fire_alarm/control';
+
+    let currentMode = 'auto';
+    let fanState = false;
+    let pumpState = false;
+
+    const clientId = 'WebDashboard_' + Math.random().toString(16).substring(2, 10);
+    const client = mqtt.connect(MQTT_WS_URL, {
+      clientId: clientId,
+      clean: true,
+      connectTimeout: 5000,
+      reconnectPeriod: 2000
+    });
+
+    const mqttDot = document.getElementById('mqttDot');
+    const mqttStatusText = document.getElementById('mqttStatusText');
+
+    client.on('connect', () => {
+      mqttDot.classList.add('connected');
+      mqttStatusText.textContent = 'Đã kết nối: broker.hivemq.com';
+      client.subscribe(TOPIC_DATA);
+    });
+
+    client.on('reconnect', () => {
+      mqttDot.classList.remove('connected');
+      mqttStatusText.textContent = 'Đang kết nối lại MQTT...';
+    });
+
+    client.on('error', (err) => {
+      mqttDot.classList.remove('connected');
+      mqttStatusText.textContent = 'Lỗi kết nối MQTT';
+      console.error(err);
+    });
+
+    // Cấu hình biểu đồ Chart.js
+    const maxDataPoints = 20;
+
+    function createChart(ctx, label, borderColor, bgColor, maxY) {
+      return new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [{
+            label: label,
+            data: [],
+            borderColor: borderColor,
+            backgroundColor: bgColor,
+            borderWidth: 2.5,
+            pointRadius: 3.5,
+            pointBackgroundColor: borderColor,
+            fill: true,
+            tension: 0.25
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: { duration: 300 },
+          plugins: {
+            legend: {
+              labels: { color: '#cbd5e1', usePointStyle: true, pointStyle: 'circle' }
+            }
+          },
+          scales: {
+            x: {
+              ticks: { color: '#64748b', maxRotation: 0 },
+              grid: { color: 'rgba(148, 163, 184, 0.08)' }
+            },
+            y: {
+              min: 0,
+              suggestedMax: maxY,
+              ticks: { color: '#64748b' },
+              grid: { color: 'rgba(148, 163, 184, 0.08)' }
+            }
+          }
+        }
+      });
+    }
+
+    const gasChart = createChart(
+      document.getElementById('gasChart').getContext('2d'),
+      'Nồng độ khí gas (%)',
+      '#f59e0b',
+      'rgba(245, 158, 11, 0.14)',
+      100
+    );
+
+    const tempChart = createChart(
+      document.getElementById('tempChart').getContext('2d'),
+      'Nhiệt độ (°C)',
+      '#38bdf8',
+      'rgba(56, 189, 248, 0.14)',
+      60
+    );
+
+    function pushChartData(chart, label, value) {
+      if (chart.data.labels.length >= maxDataPoints) {
+        chart.data.labels.shift();
+        chart.data.datasets[0].data.shift();
+      }
+      chart.data.labels.push(label);
+      chart.data.datasets[0].data.push(value);
+      chart.update();
+    }
+
+    // Nhận dữ liệu từ ESP32 qua MQTT
+    client.on('message', (topic, payload) => {
+      if (topic !== TOPIC_DATA) return;
+      try {
+        const data = JSON.parse(payload.toString());
+
+        const gasVal = Number(data.gas ?? 0).toFixed(1);
+        const rawGas = data.raw_gas ?? 0;
+        const gasPpm = data.gas_ppm ?? 0;
+        const tempVal = Number(data.temp ?? 25).toFixed(1);
+
+        document.getElementById('gasDisplay').textContent = `${gasVal} %`;
+        document.getElementById('gasSubDisplay').textContent = `ADC: ${rawGas} | ${gasPpm} ppm`;
+        document.getElementById('tempDisplay').textContent = `${tempVal} °C`;
+
+        const now = new Date();
+        const timeStr = now.toTimeString().split(' ')[0];
+        pushChartData(gasChart, timeStr, parseFloat(gasVal));
+        pushChartData(tempChart, timeStr, parseFloat(tempVal));
+
+        if (data.mode) {
+          currentMode = data.mode.toLowerCase();
+          updateModeUI();
+        }
+
+        if (typeof data.fan === 'boolean') fanState = data.fan;
+        if (typeof data.pump === 'boolean') pumpState = data.pump;
+        updateActuatorUI();
+
+        const isDanger = Boolean(data.gas_alert) || Boolean(data.temp_alert) || (parseFloat(gasVal) >= 50.0) || (parseFloat(tempVal) >= 45.0);
+        const alertBadge = document.getElementById('systemAlertBadge');
+        if (isDanger) {
+          alertBadge.textContent = 'FIRE';
+          alertBadge.classList.add('fire');
+        } else {
+          alertBadge.textContent = 'AN TOÀN';
+          alertBadge.classList.remove('fire');
+        }
+      } catch (e) {
+        console.error('Lỗi phân tích JSON từ ESP32:', e);
+      }
+    });
+
+    function updateModeUI() {
+      const btnManual = document.getElementById('btnManual');
+      const btnAuto = document.getElementById('btnAuto');
+      const btnFan = document.getElementById('btnFan');
+      const btnPump = document.getElementById('btnPump');
+      const modeTextLabel = document.getElementById('modeTextLabel');
+
+      if (currentMode === 'manual') {
+        btnManual.classList.add('active');
+        btnAuto.classList.remove('active');
+        btnFan.disabled = false;
+        btnPump.disabled = false;
+        modeTextLabel.textContent = 'MANUAL';
+      } else {
+        btnAuto.classList.add('active');
+        btnManual.classList.remove('active');
+        btnFan.disabled = true;
+        btnPump.disabled = true;
+        modeTextLabel.textContent = 'AUTO';
+      }
+    }
+
+    function updateActuatorUI() {
+      const btnFan = document.getElementById('btnFan');
+      const badgeFan = document.getElementById('badgeFan');
+      const fanSvg = document.getElementById('fanSvg');
+      const btnPump = document.getElementById('btnPump');
+      const badgePump = document.getElementById('badgePump');
+
+      btnFan.classList.toggle('on', fanState);
+      badgeFan.classList.toggle('on', fanState);
+      badgeFan.textContent = fanState ? 'ON' : 'OFF';
+      fanSvg.classList.toggle('fan-spinning', fanState);
+
+      btnPump.classList.toggle('on', pumpState);
+      badgePump.classList.toggle('on', pumpState);
+      badgePump.textContent = pumpState ? 'ON' : 'OFF';
+
+      document.getElementById('deviceSummaryNote').textContent =
+        `Trạng thái thiết bị: Quạt ${fanState ? 'ON' : 'OFF'} · Máy bơm ${pumpState ? 'ON' : 'OFF'}`;
+    }
+
+    function sendControlPayload(payloadObj) {
+      if (client.connected) {
+        client.publish(TOPIC_CONTROL, JSON.stringify(payloadObj));
+      }
+    }
+
+    function setMode(mode) {
+      currentMode = mode;
+      updateModeUI();
+      sendControlPayload({ mode: currentMode });
+    }
+
+    function toggleDevice(device) {
+      if (currentMode !== 'manual') return;
+      if (device === 'fan') {
+        fanState = !fanState;
+        updateActuatorUI();
+        sendControlPayload({ mode: 'manual', fan: fanState });
+      } else if (device === 'pump') {
+        pumpState = !pumpState;
+        updateActuatorUI();
+        sendControlPayload({ mode: 'manual', pump: pumpState });
+      }
+    }
+  </script>
+</body>
+</html>
