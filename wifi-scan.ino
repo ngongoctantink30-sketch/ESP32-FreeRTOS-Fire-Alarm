@@ -17,13 +17,12 @@
 #define GAS_THRESHOLD_PCT   50.0f   // Ngưỡng nồng độ khí gas (%) -> Bật Quạt (GPIO 18)
 #define TEMP_THRESHOLD_C    45.0f   // Ngưỡng nhiệt độ (°C) -> Bật Máy bơm (GPIO 19)
 
-// ============================================================
-// CẤU HÌNH MẠNG WI-FI & MQTT BROKER
+// CẤU HÌNH MẠNG WI-FI & MQTT BROKER (DÙNG HIVEMQ)
 // ============================================================
 const char* WIFI_SSID     = "Wokwi-GUEST";
 const char* WIFI_PASSWORD = "";
 
-const char* MQTT_BROKER   = "broker.emqx.io";
+const char* MQTT_BROKER   = "broker.hivemq.com";
 const int   MQTT_PORT     = 1883;
 const char* TOPIC_DATA    = "lab3/fire_alarm/data";
 const char* TOPIC_CONTROL = "lab3/fire_alarm/control";
